@@ -26,7 +26,13 @@ func (h *handler) ConsumeClaim(sess ConsumerGroupSession, claim ConsumerGroupCla
 	}
 	return nil
 }
-
+func (h *handler) ConsumeClaimsWithPriority(ConsumerGroupSession, []ConsumerGroupClaim) error {
+	return nil
+}
+func (h *handler) IsPriorityConsumer() bool {
+	return false
+}
+func (h *handler) SortClaimsWithPriority([]ConsumerGroupClaim) []ConsumerGroupClaim { return nil }
 func TestNewConsumerGroupFromClient(t *testing.T) {
 	t.Run("should not permit nil client", func(t *testing.T) {
 		group, err := NewConsumerGroupFromClient("group", nil)

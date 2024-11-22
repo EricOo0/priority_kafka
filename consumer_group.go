@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rcrowley/go-metrics"
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/rcrowley/go-metrics"
 )
 
 // ErrClosedConsumerGroup is the error returned when a method is called on a consumer group that has been closed.
@@ -44,7 +43,6 @@ type ConsumerGroup interface {
 	// server-side rebalance happens, the consumer session will need to be
 	// recreated to get the new claims.
 	Consume(ctx context.Context, topics []string, handler ConsumerGroupHandler) error
-
 	// Errors returns a read channel of errors that occurred during the consumer life-cycle.
 	// By default, errors are logged and not returned over this channel.
 	// If you want to implement any custom error handling, set your config's
@@ -861,6 +859,21 @@ func newConsumerGroupSession(ctx context.Context, parent *consumerGroup, claims 
 		return nil, err
 	}
 
+	if handler.IsPriorityConsumer() {
+		sess.waitGroup.Add(1)
+		go func() {
+			defer sess.waitGroup.Done()
+
+			// cancel the as session as soon as the first
+			// goroutine exits
+			defer sess.cancel()
+
+			// consume multiple topic/partition with priority, blocking
+			sess.consumeClaimWithPriority()
+		}()
+		sess.consumeClaimWithPriority()
+		return sess, nil
+	}
 	// start consuming
 	for topic, partitions := range claims {
 		for _, partition := range partitions {
@@ -957,6 +970,67 @@ func (s *consumerGroupSession) consume(topic string, partition int32) {
 	claim.AsyncClose()
 	for _, err := range claim.waitClosed() {
 		s.parent.handleError(err, topic, partition)
+	}
+}
+
+func (s *consumerGroupSession) consumeClaimWithPriority() {
+	// quick exit if rebalance is due
+	select {
+	case <-s.ctx.Done():
+		return
+	case <-s.parent.closed:
+		return
+	default:
+	}
+	claims := make([]*consumerGroupClaim, 0)
+	claimsInterface := make([]ConsumerGroupClaim, 0)
+	for topic, partitions := range s.claims {
+		for _, partition := range partitions {
+			// get next offset
+			offset := s.parent.config.Consumer.Offsets.Initial
+			if pom := s.offsets.findPOM(topic, partition); pom != nil {
+				offset, _ = pom.NextOffset()
+			}
+
+			// create new claim
+			claim, err := newConsumerGroupClaim(s, topic, partition, offset)
+			if err != nil {
+				s.parent.handleError(err, topic, partition)
+				return
+			}
+			claims = append(claims, claim)
+			claimsInterface = append(claimsInterface, claim)
+			// handle errors
+			go func() {
+				for err := range claim.Errors() {
+					s.parent.handleError(err, topic, partition)
+				}
+			}()
+
+			// trigger close when session is done
+			go func() {
+				select {
+				case <-s.ctx.Done():
+				case <-s.parent.closed:
+				}
+				claim.AsyncClose()
+			}()
+		}
+	}
+	claimsInterface = s.handler.SortClaimsWithPriority(claimsInterface)
+	// start processing
+	if err := s.handler.ConsumeClaimsWithPriority(s, claimsInterface); err != nil {
+		for _, claim := range claims {
+			s.parent.handleError(err, claim.topic, claim.partition)
+		}
+	}
+
+	// ensure consumer is closed & drained
+	for _, claim := range claims {
+		claim.AsyncClose()
+		for _, err := range claim.waitClosed() {
+			s.parent.handleError(err, claim.topic, claim.partition)
+		}
 	}
 }
 
@@ -1084,6 +1158,12 @@ type ConsumerGroupHandler interface {
 	// Once the Messages() channel is closed, the Handler must finish its processing
 	// loop and exit.
 	ConsumeClaim(ConsumerGroupSession, ConsumerGroupClaim) error
+
+	ConsumeClaimsWithPriority(ConsumerGroupSession, []ConsumerGroupClaim) error
+
+	SortClaimsWithPriority([]ConsumerGroupClaim) []ConsumerGroupClaim
+
+	IsPriorityConsumer() bool
 }
 
 // ConsumerGroupClaim processes Kafka messages from a given topic and partition within a consumer group.

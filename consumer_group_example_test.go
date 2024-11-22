@@ -16,7 +16,16 @@ func (h exampleConsumerGroupHandler) ConsumeClaim(sess ConsumerGroupSession, cla
 	}
 	return nil
 }
+func (h exampleConsumerGroupHandler) ConsumeClaimsWithPriority(ConsumerGroupSession, []ConsumerGroupClaim) error {
+	return nil
+}
+func (h exampleConsumerGroupHandler) SortClaimsWithPriority([]ConsumerGroupClaim) []ConsumerGroupClaim {
+	return nil
+}
 
+func (h exampleConsumerGroupHandler) IsPriorityConsumer() bool {
+	return false
+}
 func ExampleConsumerGroup() {
 	config := NewTestConfig()
 	config.Version = V2_0_0_0 // specify appropriate version

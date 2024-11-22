@@ -271,6 +271,15 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 		}
 	}
 }
+func (consumer *Consumer) ConsumeClaimsWithPriority(sarama.ConsumerGroupSession, []sarama.ConsumerGroupClaim) error {
+	return nil
+}
+func (consumer *Consumer) IsPriorityConsumer() bool {
+	return false
+}
+func (consumer *Consumer) SortClaimsWithPriority([]sarama.ConsumerGroupClaim) []sarama.ConsumerGroupClaim {
+	return nil
+}
 
 func (consumer *Consumer) handleTxnError(producer sarama.AsyncProducer, message *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, err error, defaulthandler func() error) {
 	log.Printf("Message consumer: unable to process transaction: %+v", err)
