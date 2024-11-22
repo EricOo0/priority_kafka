@@ -871,7 +871,6 @@ func newConsumerGroupSession(ctx context.Context, parent *consumerGroup, claims 
 			// consume multiple topic/partition with priority, blocking
 			sess.consumeClaimWithPriority()
 		}()
-		sess.consumeClaimWithPriority()
 		return sess, nil
 	}
 	// start consuming
