@@ -860,6 +860,11 @@ func newConsumerGroupSession(ctx context.Context, parent *consumerGroup, claims 
 	}
 
 	if handler.IsPriorityConsumer() {
+		// claim 有可能为空，保持连接等待 rebalance，不阻塞消费
+		claims = sess.resortClaims(claims)
+		if len(claims) == 0 {
+			return sess, nil
+		}
 		sess.waitGroup.Add(1)
 		go func() {
 			defer sess.waitGroup.Done()
@@ -869,7 +874,7 @@ func newConsumerGroupSession(ctx context.Context, parent *consumerGroup, claims 
 			defer sess.cancel()
 
 			// consume multiple topic/partition with priority, blocking
-			sess.consumeClaimWithPriority()
+			sess.consumeClaimWithPriority(claims)
 		}()
 		return sess, nil
 	}
@@ -892,7 +897,15 @@ func newConsumerGroupSession(ctx context.Context, parent *consumerGroup, claims 
 	}
 	return sess, nil
 }
-
+func (s *consumerGroupSession) resortClaims(claims map[string][]int32) map[string][]int32 {
+	res := make(map[string][]int32)
+	for topic, partitions := range claims {
+		for _, partition := range partitions {
+			res[topic] = append(res[topic], partition)
+		}
+	}
+	return res
+}
 func (s *consumerGroupSession) Claims() map[string][]int32 { return s.claims }
 func (s *consumerGroupSession) MemberID() string           { return s.memberID }
 func (s *consumerGroupSession) GenerationID() int32        { return s.generationID }
@@ -972,7 +985,7 @@ func (s *consumerGroupSession) consume(topic string, partition int32) {
 	}
 }
 
-func (s *consumerGroupSession) consumeClaimWithPriority() {
+func (s *consumerGroupSession) consumeClaimWithPriority(priorityClaims map[string][]int32) {
 	// quick exit if rebalance is due
 	select {
 	case <-s.ctx.Done():
@@ -983,7 +996,7 @@ func (s *consumerGroupSession) consumeClaimWithPriority() {
 	}
 	claims := make([]*consumerGroupClaim, 0)
 	claimsInterface := make([]ConsumerGroupClaim, 0)
-	for topic, partitions := range s.claims {
+	for topic, partitions := range priorityClaims {
 		for _, partition := range partitions {
 			// get next offset
 			offset := s.parent.config.Consumer.Offsets.Initial
